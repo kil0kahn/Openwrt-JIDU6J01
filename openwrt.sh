@@ -22,7 +22,11 @@ else
   # --depth=200 keeps plenty of margin over the "last 100 commits" window
   # the cherry-pick exclusion logic below needs, while avoiding a full,
   # multi-decade history clone on every cold run
-  git clone --depth=200 https://github.com/openwrt/openwrt.git
+  # --depth=200 anchored directly at the tag (not the default branch) -
+  # cloning shallow from the default branch instead would risk v25.12.5
+  # falling outside that commit window entirely, since tags aren't
+  # necessarily near the default branch's current tip
+  git clone --depth=200 --branch v25.12.5 https://github.com/openwrt/openwrt.git
   cd openwrt
   git checkout v25.12.5
 fi
