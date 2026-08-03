@@ -8,33 +8,10 @@ sudo apt install -y build-essential clang flex bison g++ gawk \
 gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
 python3-setuptools rsync swig unzip zlib1g-dev file wget ccache tree
 
-if [ -d openwrt/.git ]; then
-  echo "==============================found existing openwrt checkout (cache hit) - reusing=============================="
-  cd openwrt
-  git fetch origin v25.12.5 --force
-  git reset --hard FETCH_HEAD
-  # remove leftover files/PR-cherry-picks from the previous run's working
-  # tree, but keep the expensive stuff: downloaded sources, compiled
-  # toolchain/packages, and ccache's object cache
-  git clean -fdx -e dl -e staging_dir -e build_dir -e .ccache
-  # host tools (like luarocks) are built from feeds/, which gets wiped and
-  # re-fetched fresh above - stale cached host-build state from a
-  # previous feed version can otherwise mismatch a newly-fetched one.
-  # host tools are cheap to rebuild, so don't try to preserve them.
-  rm -rf build_dir/host staging_dir/host/stamp/.luarocks* 2>/dev/null || true
-else
-  echo "==============================no cached checkout found - cloning fresh (shallow)=============================="
-  # --depth=200 keeps plenty of margin over the "last 100 commits" window
-  # the cherry-pick exclusion logic below needs, while avoiding a full,
-  # multi-decade history clone on every cold run
-  # --depth=200 anchored directly at the tag (not the default branch) -
-  # cloning shallow from the default branch instead would risk v25.12.5
-  # falling outside that commit window entirely, since tags aren't
-  # necessarily near the default branch's current tip
-  git clone --depth=200 --branch v25.12.5 https://github.com/openwrt/openwrt.git
-  cd openwrt
-  git checkout v25.12.5
-fi
+git clone https://github.com/openwrt/openwrt.git
+cd openwrt
+
+git checkout v25.12.5
 
 git config --global user.email "ci@build.local"
 git config --global user.name "CI Builder"
@@ -45,7 +22,7 @@ git fetch origin pull/23510/head:pr-23510 --force
 # Get only Jio-related commits and cherry-pick them dynamically
 git log pr-23510 --oneline --grep="jio\|jidu" --regexp-ignore-case --format="%H"| tac | \
   grep -v $(git log --format="%H" | head -100 | tr '\n' '\|' | sed 's/|$//') | \
-  xargs git cherry-pick -X theirs
+  xargs -r git cherry-pick -X theirs
 
 
 echo "==============================adding initramfs-factory.ubi artifact to JIDU6101 and JIDU6J01=============================="
@@ -90,6 +67,9 @@ EOF
 cp $REPO_DIR/${DEVICE_CONFIG} .config
 
 make defconfig
+
+echo "==============================verifying required kernel/package options=============================="
+grep -E "CONFIG_NET_SCH_FQ|CONFIG_NET_SCHED|CONFIG_PACKAGE_ip-full|CONFIG_PACKAGE_tc-full" .config
 
 echo "==============================adding fantastic package feeds=============================="
 # --- Add fantastic-packages runtime feed (baked into firmware) ---
@@ -146,7 +126,6 @@ EOF
 # so the hash table scales with nf_conntrack_max above (~max/4 is the
 # standard sizing ratio; this device's stock default kept them equal 1:1,
 # which under-sizes the hash table and increases collisions under load)
-mkdir -p files/etc/modules.d
 echo "options nf_conntrack hashsize=16384" > files/etc/modules.d/01-nf-conntrack
 echo "==============================finished setting BBR as default=============================="
 
