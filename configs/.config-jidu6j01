@@ -2982,7 +2982,7 @@ CONFIG_PACKAGE_kmod-sched=y
 # CONFIG_PACKAGE_kmod-sched-act-sample is not set
 CONFIG_PACKAGE_kmod-sched-act-vlan=y
 CONFIG_PACKAGE_kmod-sched-bpf=y
-CONFIG_PACKAGE_kmod-sched-cake=y
+# CONFIG_PACKAGE_kmod-sched-cake is not set
 # CONFIG_PACKAGE_kmod-sched-connmark is not set
 CONFIG_PACKAGE_kmod-sched-core=y
 # CONFIG_PACKAGE_kmod-sched-ctinfo is not set
@@ -3012,8 +3012,6 @@ CONFIG_PACKAGE_kmod-tcp-scalable=y
 # CONFIG_PACKAGE_kmod-vrf is not set
 # CONFIG_PACKAGE_kmod-vxlan is not set
 # CONFIG_PACKAGE_kmod-wireguard is not set
-CONFIG_NET_SCHED=y
-CONFIG_NET_SCH_FQ=y
 # end of Network Support
 
 #
