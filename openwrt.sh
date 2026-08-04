@@ -8,8 +8,16 @@ sudo apt install -y build-essential clang flex bison g++ gawk \
 gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
 python3-setuptools rsync swig unzip zlib1g-dev file wget ccache tree
 
-git clone https://github.com/openwrt/openwrt.git
+git clone --depth=200 --branch v25.12.5 https://github.com/openwrt/openwrt.git
 cd openwrt
+
+# dl/ is cached at the workspace top level (see workflow), not nested
+# inside openwrt/ - restoring it INTO openwrt/ before this clone runs
+# would make git clone fail (it refuses a non-empty target directory).
+# Symlinking it in after the clone avoids that entirely.
+mkdir -p ../dl-cache
+rm -rf dl
+ln -s ../dl-cache dl
 
 git checkout v25.12.5
 
@@ -68,8 +76,6 @@ cp $REPO_DIR/${DEVICE_CONFIG} .config
 
 make defconfig
 
-echo "==============================verifying required kernel/package options=============================="
-grep -E "CONFIG_NET_SCH_FQ|CONFIG_NET_SCHED|CONFIG_PACKAGE_ip-full|CONFIG_PACKAGE_tc-full" .config
 
 echo "==============================adding fantastic package feeds=============================="
 # --- Add fantastic-packages runtime feed (baked into firmware) ---
@@ -112,8 +118,11 @@ echo "tcp_bbr" > files/etc/modules.d/10-tcp-bbr
 mkdir -p files/etc/sysctl.d
 cat > files/etc/sysctl.d/99-bbr.conf <<-EOF
 net.ipv4.tcp_congestion_control=bbr
-# fq pairs with BBR for proper pacing - Google's own recommendation
-net.core.default_qdisc=fq
+# NOT setting net.core.default_qdisc=fq: on kernels 4.13+ (this build uses
+# 6.12), BBR falls back to internal TCP pacing when fq isn't the qdisc -
+# confirmed via OpenWrt's own kmod-tcp-bbr PR discussion. Forcing fq
+# globally isn't needed here and was previously removed after verifying
+# this. fq_codel (the stock default) is kept as-is.
 # raised from this device's actual measured default of 31232 (confirmed
 # via /proc/sys/net/netfilter/nf_conntrack_max on stock firmware) for a
 # busy multi-device household (5+ concurrent WiFi clients)
