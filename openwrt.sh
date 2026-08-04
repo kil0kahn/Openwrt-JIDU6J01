@@ -69,6 +69,12 @@ src-git --root=feeds fantastic_packages https://github.com/fantastic-packages/pa
 EOF
 
 ./scripts/feeds update -a
+# Generate the untouched vanilla config for this exact device profile, for comparison
+cp .config /tmp/vanilla-seed.config 2>/dev/null || true
+printf 'CONFIG_TARGET_mediatek=y\nCONFIG_TARGET_mediatek_filogic=y\nCONFIG_TARGET_mediatek_filogic_DEVICE_jiorouter_ax6000-jidu6j01=y\n' > .config
+make defconfig
+cp .config /tmp/vanilla-jidu6j01.config
+diff /tmp/vanilla-jidu6j01.config "$REPO_DIR/${DEVICE_CONFIG}" > /tmp/vanilla-diff.txt || true
 ./scripts/feeds install -a
 
 # Copy config and inject ccache dir dynamically
