@@ -117,17 +117,9 @@ echo "tcp_bbr" > files/etc/modules.d/10-tcp-bbr
 
 mkdir -p files/etc/sysctl.d
 cat > files/etc/sysctl.d/99-bbr.conf <<-EOF
+# Custom Configuration
 net.ipv4.tcp_congestion_control=bbr
-# NOT setting net.core.default_qdisc=fq: on kernels 4.13+ (this build uses
-# 6.12), BBR falls back to internal TCP pacing when fq isn't the qdisc -
-# confirmed via OpenWrt's own kmod-tcp-bbr PR discussion. Forcing fq
-# globally isn't needed here and was previously removed after verifying
-# this. fq_codel (the stock default) is kept as-is.
-# raised from this device's actual measured default of 31232 (confirmed
-# via /proc/sys/net/netfilter/nf_conntrack_max on stock firmware) for a
-# busy multi-device household (5+ concurrent WiFi clients)
 net.netfilter.nf_conntrack_max=65536
-# skip a round-trip on repeat connections to the same host, no real downside
 net.ipv4.tcp_fastopen=3
 EOF
 
