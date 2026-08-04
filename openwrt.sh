@@ -71,7 +71,7 @@ EOF
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# Copy config and inject ccache dir dynamically
+# Copy the device config in
 cp $REPO_DIR/${DEVICE_CONFIG} .config
 
 make defconfig
