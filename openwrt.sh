@@ -4,17 +4,15 @@ set -e
 REPO_DIR=$(pwd)
 
 sudo apt update
-sudo apt install -y build-essential clang flex bison g++ gawk \
-gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
-python3-setuptools rsync swig unzip zlib1g-dev file wget ccache tree
+sudo apt install -y \
+    build-essential clang flex bison g++ gawk \
+    gcc-multilib g++-multilib gettext git \
+    libncurses5-dev libssl-dev python3-setuptools \
+    rsync swig unzip zlib1g-dev file wget ccache tree
 
 git clone --depth=200 --branch v25.12.5 https://github.com/openwrt/openwrt.git
 cd openwrt
 
-# dl/ is cached at the workspace top level (see workflow), not nested
-# inside openwrt/ - restoring it INTO openwrt/ before this clone runs
-# would make git clone fail (it refuses a non-empty target directory).
-# Symlinking it in after the clone avoids that entirely.
 mkdir -p ../dl-cache
 rm -rf dl
 ln -s ../dl-cache dl
@@ -24,118 +22,49 @@ git checkout v25.12.5
 git config --global user.email "ci@build.local"
 git config --global user.name "CI Builder"
 
-# Fetch the PR
+echo "Fetching PR #23510..."
 git fetch origin pull/23510/head:pr-23510 --force
 
-# Get only Jio-related commits and cherry-pick them dynamically
-git log pr-23510 --oneline --grep="jio\|jidu" --regexp-ignore-case --format="%H"| tac | \
-  grep -v $(git log --format="%H" | head -100 | tr '\n' '\|' | sed 's/|$//') | \
-  xargs -r git cherry-pick -X theirs
+echo "Cherry-picking Jio commits..."
+git log pr-23510 \
+    --oneline \
+    --grep="jio\|jidu" \
+    --regexp-ignore-case \
+    --format="%H" |
+tac |
+grep -v "$(git log --format="%H" | head -100 | tr '\n' '\|' | sed 's/|$//')" |
+xargs -r git cherry-pick -X theirs
 
-
-echo "==============================adding initramfs-factory.ubi artifact to JIDU6101 and JIDU6J01=============================="
-# Add initramfs-factory.ubi artifact to JIDU6101 and JIDU6J01
-FILOGIC_MK="target/linux/mediatek/image/filogic.mk"
-
-for DEV in jiorouter_ax6000-jidu6101 jiorouter_ax6000-jidu6j01; do
-  # Skip if this device already has the artifact (idempotent)
-  if awk "/^define Device\/${DEV}\$/,/^endef/" "$FILOGIC_MK" | grep -q "initramfs-factory.ubi"; then
-    echo "[$DEV] initramfs-factory.ubi already present, skipping"
-    continue
-  fi
-
-  echo "[$DEV] adding initramfs-factory.ubi artifact"
-
-  # Insert the artifact block before the sysupgrade line, but ONLY inside this device's block
-  awk -v dev="$DEV" '
-    $0 == "define Device/" dev { indev=1 }
-    indev && /^  IMAGE\/sysupgrade\.bin := sysupgrade-tar \| append-metadata$/ {
-      print "ifeq ($(IB),)"
-      print "ifneq ($(CONFIG_TARGET_ROOTFS_INITRAMFS),)"
-      print "  ARTIFACTS := initramfs-factory.ubi"
-      print "  ARTIFACT/initramfs-factory.ubi := append-image-stage initramfs-kernel.bin | ubinize-kernel"
-      print "endif"
-      print "endif"
-      indev=0
-    }
-    { print }
-  ' "$FILOGIC_MK" > "${FILOGIC_MK}.tmp" && mv "${FILOGIC_MK}.tmp" "$FILOGIC_MK"
-done
-echo "==============================finished adding initramfs-factory.ubi artifact to JIDU6101 and JIDU6J01=============================="
-
-
-cat <<-EOF >> feeds.conf.default
-src-git --root=feeds fantastic_packages https://github.com/fantastic-packages/packages.git;master
-EOF
-
+echo "Updating feeds..."
 ./scripts/feeds update -a
-# Generate the untouched vanilla config for this exact device profile, for comparison
-cp .config /tmp/vanilla-seed.config 2>/dev/null || true
-printf 'CONFIG_TARGET_mediatek=y\nCONFIG_TARGET_mediatek_filogic=y\nCONFIG_TARGET_mediatek_filogic_DEVICE_jiorouter_ax6000-jidu6j01=y\n' > .config
-make defconfig
-cp .config /tmp/vanilla-jidu6j01.config
-diff /tmp/vanilla-jidu6j01.config "$REPO_DIR/${DEVICE_CONFIG}" > /tmp/vanilla-diff.txt || true
 ./scripts/feeds install -a
 
-# Copy config and inject ccache dir dynamically
-cp $REPO_DIR/${DEVICE_CONFIG} .config
+echo "Generating vanilla config..."
+
+cat > .config <<'EOF'
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_mediatek_filogic_DEVICE_jiorouter_ax6000-jidu6j01=y
+EOF
 
 make defconfig
 
+cp .config /tmp/vanilla-jidu6j01.config
 
-echo "==============================adding fantastic package feeds=============================="
-# --- Add fantastic-packages runtime feed (baked into firmware) ---
-VER="25.12"
-ARCH="aarch64_cortex-a53"
-KEYID="20241123170031"   # from the grep above, WITHOUT the .pub extension
+echo "Generating diff..."
 
-mkdir -p files/etc/apk/repositories.d
-mkdir -p files/etc/apk/keys
+diff \
+    /tmp/vanilla-jidu6j01.config \
+    "$REPO_DIR/${DEVICE_CONFIG}" \
+    > /tmp/vanilla-diff.txt || true
 
-# Correct feed URLs (github.io, not openwrt.org)
-cat > files/etc/apk/repositories.d/customfeeds.list <<EOF
-https://fantastic-packages.github.io/releases/${VER}/packages/${ARCH}/luci/packages.adb
-https://fantastic-packages.github.io/releases/${VER}/packages/${ARCH}/packages/packages.adb
-https://fantastic-packages.github.io/releases/${VER}/packages/${ARCH}/special/packages.adb
-EOF
+echo
+echo "Done."
+echo
+echo "Artifacts:"
+echo "  /tmp/vanilla-jidu6j01.config"
+echo "  /tmp/vanilla-diff.txt"
 
-# Public key so apk trusts the feed (no --allow-untrusted needed)
-curl -sSL -o "files/etc/apk/keys/${KEYID}.pem" \
-  "https://fantastic-packages.github.io/releases/${VER}/${KEYID}.pub"
-
-# Fail loudly if the key didn't download — don't ship a feed with no key
-if [ ! -s "files/etc/apk/keys/${KEYID}.pem" ]; then
-  echo "ERROR: fantastic-packages key download failed or empty"
-  exit 1
-fi
-echo "Successfully added fantastic-packages feed with key ${KEYID}.pem"
-echo "==============================finished adding fantastic package feeds=============================="
-
-
-
-echo "==============================setting BBR as default TCP congestion control=============================="
-# kmod-tcp-bbr is already selected in .config, but building the module in
-# doesn't make it active - it still needs to be loaded at boot and selected
-# via sysctl. This bakes both into the image so it's the default from first
-# boot, with no manual sysctl step needed on the device afterward.
-mkdir -p files/etc/modules.d
-echo "tcp_bbr" > files/etc/modules.d/10-tcp-bbr
-
-mkdir -p files/etc/sysctl.d
-cat > files/etc/sysctl.d/99-bbr.conf <<-EOF
-# Custom Configuration
-net.ipv4.tcp_congestion_control=bbr
-net.netfilter.nf_conntrack_max=65536
-net.ipv4.tcp_fastopen=3
-EOF
-
-# hashsize is a module load-time parameter, not a sysctl - must be set here
-# so the hash table scales with nf_conntrack_max above (~max/4 is the
-# standard sizing ratio; this device's stock default kept them equal 1:1,
-# which under-sizes the hash table and increases collisions under load)
-echo "options nf_conntrack hashsize=16384" > files/etc/modules.d/01-nf-conntrack
-echo "==============================finished setting BBR as default=============================="
-
-make -j$(nproc)
-
-echo "Build completed successfully! Artifacts are located in bin/targets/mediatek/filogic/"
+echo
+echo "Diff summary:"
+wc -l /tmp/vanilla-diff.txt || true
