@@ -128,3 +128,4 @@ jobs:
           openwrt/bin/targets/mediatek/filogic/openwrt*.ubi
           openwrt/bin/targets/mediatek/filogic/sha256sums
           openwrt/bin/targets/mediatek/filogic/*.manifest
+          /tmp/vanilla-diff.txt
