@@ -8,13 +8,10 @@ sudo apt install -y build-essential clang flex bison g++ gawk \
 gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
 python3-setuptools rsync swig unzip zlib1g-dev file wget ccache tree
 
-git clone --depth=200 --branch v25.12.5 https://github.com/openwrt/openwrt.git
+git clone --branch v25.12.5 https://github.com/openwrt/openwrt.git
 cd openwrt
 
-# dl/ is cached at the workspace top level (see workflow), not nested
-# inside openwrt/ - restoring it INTO openwrt/ before this clone runs
-# would make git clone fail (it refuses a non-empty target directory).
-# Symlinking it in after the clone avoids that entirely.
+# Symlink dl-cache
 mkdir -p ../dl-cache
 rm -rf dl
 ln -s ../dl-cache dl
@@ -24,20 +21,27 @@ git checkout v25.12.5
 git config --global user.email "ci@build.local"
 git config --global user.name "CI Builder"
 
-# Fetch the PR
+# Unshallow if clone was shallow to ensure merge history is complete
+if [ -f .git/shallow ]; then
+  echo "Unshallowing repo history..."
+  git fetch --unshallow origin || true
+fi
+
+# Fetch the PR branch
+echo "Fetching PR #23510..."
 git fetch origin pull/23510/head:pr-23510 --force
 
-# Get only Jio-related commits and cherry-pick them dynamically
-git log pr-23510 --oneline --grep="jio\|jidu" --regexp-ignore-case --format="%H"| tac | \
-  grep -v $(git log --format="%H" | head -100 | tr '\n' '\|' | sed 's/|$//') | \
-  xargs -r git cherry-pick -X theirs
+# Apply ALL commits from the PR without missing any non-grep'd commits
+echo "Applying PR commits..."
+git cherry-pick -X theirs v25.12.5..pr-23510
 
-
-echo "==============================adding initramfs-factory.ubi artifact to JIDU6101 and JIDU6J01=============================="
-# Add initramfs-factory.ubi artifact to JIDU6101 and JIDU6J01
+echo "==============================adding initramfs-factory.ubi artifact to ALL Jio devices=============================="
 FILOGIC_MK="target/linux/mediatek/image/filogic.mk"
 
-for DEV in jiorouter_ax6000-jidu6101 jiorouter_ax6000-jidu6j01; do
+# Dynamically extract all JIDU device definitions in filogic.mk
+JIO_DEVICES=$(grep -E "^define Device/jiorouter_ax6000-jidu" "$FILOGIC_MK" | cut -d'/' -f2)
+
+for DEV in $JIO_DEVICES; do
   # Skip if this device already has the artifact (idempotent)
   if awk "/^define Device\/${DEV}\$/,/^endef/" "$FILOGIC_MK" | grep -q "initramfs-factory.ubi"; then
     echo "[$DEV] initramfs-factory.ubi already present, skipping"
@@ -46,7 +50,7 @@ for DEV in jiorouter_ax6000-jidu6101 jiorouter_ax6000-jidu6j01; do
 
   echo "[$DEV] adding initramfs-factory.ubi artifact"
 
-  # Insert the artifact block before the sysupgrade line, but ONLY inside this device's block
+  # Insert the artifact block before the sysupgrade line inside this device's block
   awk -v dev="$DEV" '
     $0 == "define Device/" dev { indev=1 }
     indev && /^  IMAGE\/sysupgrade\.bin := sysupgrade-tar \| append-metadata$/ {
@@ -61,8 +65,7 @@ for DEV in jiorouter_ax6000-jidu6101 jiorouter_ax6000-jidu6j01; do
     { print }
   ' "$FILOGIC_MK" > "${FILOGIC_MK}.tmp" && mv "${FILOGIC_MK}.tmp" "$FILOGIC_MK"
 done
-echo "==============================finished adding initramfs-factory.ubi artifact to JIDU6101 and JIDU6J01=============================="
-
+echo "==============================finished artifact patching=============================="
 
 cat <<-EOF >> feeds.conf.default
 src-git --root=feeds fantastic_packages https://github.com/fantastic-packages/packages.git;master
@@ -71,11 +74,10 @@ EOF
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# Copy the device config in
-cp $REPO_DIR/${DEVICE_CONFIG} .config
+# Copy device configuration
+cp "$REPO_DIR/${DEVICE_CONFIG}" .config
 
 make defconfig
-
 
 make -j$(nproc)
 
