@@ -11,7 +11,7 @@ python3-setuptools rsync swig unzip zlib1g-dev file wget ccache tree
 git clone --branch v25.12.5 https://github.com/openwrt/openwrt.git
 cd openwrt
 
-# Symlink dl-cache
+# Symlink dl-cache from workspace top level
 mkdir -p ../dl-cache
 rm -rf dl
 ln -s ../dl-cache dl
@@ -21,27 +21,26 @@ git checkout v25.12.5
 git config --global user.email "ci@build.local"
 git config --global user.name "CI Builder"
 
-# Unshallow if clone was shallow to ensure merge history is complete
+# Unshallow if clone was shallow so git revision ranges work cleanly
 if [ -f .git/shallow ]; then
   echo "Unshallowing repo history..."
   git fetch --unshallow origin || true
 fi
 
-# Fetch the PR branch
+# Fetch the exact PR branch tip
 echo "Fetching PR #23510..."
 git fetch origin pull/23510/head:pr-23510 --force
 
-# Apply ALL commits from the PR without missing any non-grep'd commits
+# Apply ALL commits added in PR #23510 on top of v25.12.5
+# --empty=drop automatically skips commits that result in no changes (fixes CI build failure)
 echo "Applying PR commits..."
-git cherry-pick -X theirs v25.12.5..pr-23510
+git cherry-pick --empty=drop -X theirs v25.12.5..pr-23510
 
-echo "==============================adding initramfs-factory.ubi artifact to ALL Jio devices=============================="
+
+echo "==============================adding initramfs-factory.ubi artifact to JIDU6101 and JIDU6J01=============================="
 FILOGIC_MK="target/linux/mediatek/image/filogic.mk"
 
-# Dynamically extract all JIDU device definitions in filogic.mk
-JIO_DEVICES=$(grep -E "^define Device/jiorouter_ax6000-jidu" "$FILOGIC_MK" | cut -d'/' -f2)
-
-for DEV in $JIO_DEVICES; do
+for DEV in jiorouter_ax6000-jidu6101 jiorouter_ax6000-jidu6j01; do
   # Skip if this device already has the artifact (idempotent)
   if awk "/^define Device\/${DEV}\$/,/^endef/" "$FILOGIC_MK" | grep -q "initramfs-factory.ubi"; then
     echo "[$DEV] initramfs-factory.ubi already present, skipping"
@@ -65,7 +64,8 @@ for DEV in $JIO_DEVICES; do
     { print }
   ' "$FILOGIC_MK" > "${FILOGIC_MK}.tmp" && mv "${FILOGIC_MK}.tmp" "$FILOGIC_MK"
 done
-echo "==============================finished artifact patching=============================="
+echo "==============================finished adding initramfs-factory.ubi artifact=============================="
+
 
 cat <<-EOF >> feeds.conf.default
 src-git --root=feeds fantastic_packages https://github.com/fantastic-packages/packages.git;master
@@ -74,7 +74,7 @@ EOF
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# Copy device configuration
+# Copy the device config in
 cp "$REPO_DIR/${DEVICE_CONFIG}" .config
 
 make defconfig
