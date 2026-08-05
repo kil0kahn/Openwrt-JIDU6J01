@@ -1,1 +1,1 @@
-# Openwrt-JIDU6401
+# Openwrt-JIDU6J01
